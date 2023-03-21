@@ -12,51 +12,100 @@ Student:   André Nóbrega
 #define K1 0
 #define K2 65535
 
-iftImage *getSagittalSlice(iftImage *img, int x){
-    iftImage *sagittalSlice = iftCreateColorImage(img->zsize, img->ysize, 1, 3);
+iftImage *getSagittalSlice(iftImage *img, int x, int perspective){
+    // iftImage *sagittalSlice = iftCreateColorImage(img->ysize, img->zsize, 1, K2);
+    iftImage *sagittalSlice = iftCreateImage(img->ysize, img->zsize, 1);
+
     iftVoxel u;
-    u.x = x;
+
     int k = 0;
-    
-    for (u.y = 0; u.y < img->ysize; u.y++){
-        for (u.z = 0; u.z < img->zsize; u.z++){
-            int p = iftGetVoxelIndex(img, u);
-            sagittalSlice->val[k] = img->val[p];
-            k++;
+    // radiologist
+    if (perspective == 0){         u.x = x;
+        for (u.z = img->zsize - 1; u.z >= 0; u.z--){
+            for (u.y = 0; u.y < img->ysize; u.y++){ 
+                int p = iftGetVoxelIndex(img, u);
+                sagittalSlice->val[k] = img->val[p];
+                k++;
+            }
+        }
+    }
+    // neurologist
+    else{
+        u.x = (img->xsize - 1) - x;
+        for (u.z = img->zsize - 1; u.z >= 0; u.z--){
+            for (u.y = img->ysize - 1; u.y >= 0; u.y--){ 
+                int p = iftGetVoxelIndex(img, u);
+                sagittalSlice->val[k] = img->val[p];
+                k++;
+            }
         }
     }
     return sagittalSlice;
 }
 
 
-iftImage *getCoronalSlice(iftImage *img, int y){
-    iftImage *coronalSlice = iftCreateColorImage(img->xsize, img->zsize, 1, 3);
-    iftVoxel u;
-    u.y = y;
-    int k = 0;
+iftImage *getCoronalSlice(iftImage *img, int y, int perspective){
+    // iftImage *coronalSlice = iftCreateColorImage(img->xsize, img->zsize, 1, K2);
+    iftImage *coronalSlice = iftCreateImage(img->xsize, img->zsize, 1);
 
-    for (u.z = 0; u.z < img->zsize; u.z++){
-        for (u.x = 0; u.x < img->xsize; u.x++){
-            int p = iftGetVoxelIndex(img, u);
-            coronalSlice->val[k] = img->val[p];
-            k++;
+    iftVoxel u;
+
+    int k = 0;
+    // radiologist
+    if (perspective == 0){ 
+        u.y = y;
+        for (u.z = img->zsize - 1; u.z >= 0; u.z--){
+            for (u.x = 0; u.x < img->xsize; u.x++){
+                int p = iftGetVoxelIndex(img, u);
+                coronalSlice->val[k] = img->val[p];
+                k++;
+            }
         }
+    }
+
+    // neurologist
+    else{ 
+        u.y = (img->ysize - 1) - y;
+        for (u.z = img->zsize - 1; u.z >= 0; u.z--){
+                for (u.x = img->xsize - 1; u.x >= 0; u.x--){
+                    int p = iftGetVoxelIndex(img, u);
+                    coronalSlice->val[k] = img->val[p];
+                    k++;
+                }
+            }
     }
     return coronalSlice;
 }
 
 
-iftImage *getAxialSlice(iftImage *img, int z){
-    iftImage *axialSlice = iftCreateColorImage(img->xsize, img->ysize, 1, 3);
-    iftVoxel u;
-    u.z = z;
-    int k = 0;
+iftImage *getAxialSlice(iftImage *img, int z, int perspective){
+    // iftImage *axialSlice = iftCreateColorImage(img->xsize, img->ysize, 1, K2);
+    iftImage *axialSlice = iftCreateImage(img->xsize, img->ysize, 1);
 
-    for (u.y = 0; u.y < img->ysize; u.y++){
-        for (u.x = 0; u.x < img->xsize; u.x++){
-            int p = iftGetVoxelIndex(img, u);
-            axialSlice->val[k] = img->val[p];
-            k++;
+    iftVoxel u;
+
+    int k = 0;
+    // radiologist
+    if (perspective == 0){
+        u.z = z;
+        for (u.y = 0; u.y < img->ysize; u.y++){
+            for (u.x = 0; u.x < img->xsize; u.x++){
+                int p = iftGetVoxelIndex(img, u);
+                axialSlice->val[k] = img->val[p];
+                k++;
+            }
+        }
+    }
+
+    // neurologist
+    else{
+        u.z = (img->zsize - 1) - z;
+        for (u.y = 0; u.y < img->ysize; u.y++){
+            for (u.x = img->xsize - 1; u.x >= 0; u.x--){
+                int p = iftGetVoxelIndex(img, u);
+                axialSlice->val[k] = img->val[p];
+                k++;
+            }
         }
     }
     return axialSlice;
@@ -64,9 +113,9 @@ iftImage *getAxialSlice(iftImage *img, int z){
 
 void linearStretch(iftImage *img, int l1, int l2){
     for (int p = 0; p < img->n; p++){
-        if (img->val[p] < l1) img->val[p] = K1;
-        else if (img->val[p] >= l2) img->val[p] = K2;
-        else img->val[p] = (K2 - K1) / (l2 - l1) * (img->val[p] - l1) + K1;
+        if      (img->val[p] < l1)      img->val[p] = (int)(K1);
+        else if (img->val[p] >= l2)     img->val[p] = (int)(K2);
+        else                            img->val[p] = (int)((K2 - K1) / (l2 - l1) * (img->val[p] - l1) + K1);
     }
 }
 
@@ -75,24 +124,41 @@ void radiometricEnhance(iftImage *img, iftImage *slice, float window_percentage,
     int lmax = iftMaximumValue(img);
     int lmin = iftMinimumValue(img);
 
-    int window = window_percentage * (lmax - lmin);
-    int level  = level_percentage * lmax;
+    float window = window_percentage * (lmax - lmin);
+    float level  = level_percentage * lmax;
 
-    int l2 = level + window / 2;
-    int l1 = level - window / 2;
+    float l2 = level + window / 2;
+    float l1 = level - window / 2;
+
+    if (l1 < lmin) l1 = lmin;
+    if (l2 > lmax) l2 = lmax;
 
     linearStretch(slice, l1, l2);
 }
 
-void applyColoringToSlice(iftImage *img){
-    iftColorTable *ctb = iftBlueToRedColorTable(K2); // K2 = 65535 (2^16 - 1)
-    iftConvertRGBColorTableToYCbCrColorTable(ctb, 255);
+iftColor getHeatMapProportionalColor(int intensity, int maximumValue){
+    float V = (float)(intensity)/maximumValue;
+    V = (6 - 2) * V + 1;
 
+    iftColor RGB;
+    RGB.val[0] = maximumValue * iftMax(0, ( 3 - fabs(V - 4) - fabs(V - 5) ) / 2);
+    RGB.val[1] = maximumValue * iftMax(0, ( 4 - fabs(V - 2) - fabs(V - 4) ) / 2);
+    RGB.val[2] = maximumValue * iftMax(0, ( 3 - fabs(V - 1) - fabs(V - 2) ) / 2);
+
+    iftColor YCbCr = iftRGBtoYCbCr(RGB, K2);
+    return YCbCr;
+}
+
+iftImage *getColoredToSlice(iftImage *img){
+    iftImage *coloredImage = iftCreateColorImage(img->xsize, img->ysize, img->zsize, K2);
     for (int p = 0; p < img->n; p++){
-        img->val[p] = ctb->color[img->val[p]].val[0];
-        img->Cb[p]  = ctb->color[img->val[p]].val[1];
-        img->Cr[p]  = ctb->color[img->val[p]].val[2];
+        iftColor YCbCr = getHeatMapProportionalColor(img->val[p], K2);
+        coloredImage->val[p] = YCbCr.val[0];
+        coloredImage->Cb[p]  = YCbCr.val[1];
+        coloredImage->Cr[p]  = YCbCr.val[2];
     }
+
+    return coloredImage;
 }
 
 
@@ -121,11 +187,12 @@ int main(int argc, char *argv[]){
     int x             = atoi(argv[2]);
     int y             = atoi(argv[3]);
     int z             = atoi(argv[4]);
-    int point_of_view = atoi(argv[5]);
-    float window_p    = atof(argv[6]);
-    float level_p     = atof(argv[7]);
+    int perspective   = atoi(argv[5]);
+    float window_p    = 1.0 - atof(argv[6]);
+    float level_p     = 1.0 - atof(argv[7]);
+
     char filename[200];
-    char *view_name = ((point_of_view == 0) ? "radiologist" :  "neurologist");
+    char *view_name = ((perspective == 0) ? "radiologist" :  "neurologist");
 
     if ((x < 0)||(x >= img->xsize))
         iftError("x-coordinate must be in [0,%d]", "main", img->xsize-1);
@@ -133,32 +200,53 @@ int main(int argc, char *argv[]){
         iftError("y-coordinate must be in [0,%d]", "main", img->ysize-1);
     if ((z < 0)||(z >= img->zsize))
         iftError("z-coordinate must be in [0,%d]", "main", img->zsize-1);
+    if ((window_p < 0)||(window_p > 1.0))
+        iftError("window percentage must be in [0,1]", "main");
+    if ((level_p < 0)||(level_p > 1.0))
+        iftError("level percentage must be in [0,1]", "main");
+    if (perspective != 0 && perspective != 1)
+        iftError("perspective must be 0 or 1", "main");
     
 
-    iftImage *sagitalSlice = getSagittalSlice(img, x);
-    iftImage *coronalSlice = getCoronalSlice(img, y);
-    iftImage *axialSlice   = getAxialSlice(img, z);
+    iftImage *sagitalSlice = getSagittalSlice(img, x, perspective);
+    iftImage *coronalSlice = getCoronalSlice(img, y, perspective);
+    iftImage *axialSlice   = getAxialSlice(img, z, perspective);
 
 
     radiometricEnhance(img, sagitalSlice, window_p, level_p);
     radiometricEnhance(img, coronalSlice, window_p, level_p);
-    radiometricEnhance(img, axialSlice, window_p, level_p);
+    radiometricEnhance(img, axialSlice,   window_p, level_p);
 
 
-    applyColoringToSlice(axialSlice);
+    iftImage *coloredSagital = getColoredToSlice(sagitalSlice);
+    iftImage *coloredCoronal = getColoredToSlice(coronalSlice);
+    iftImage *coloredAxial   = getColoredToSlice(axialSlice);
+
 
     sprintf(filename, "%s-sagital.png", view_name);
-    iftWriteImageByExt(sagitalSlice,filename);
+    iftWriteImageByExt(coloredSagital,filename);
 
     sprintf(filename, "%s-coronal.png", view_name);
-    iftWriteImageByExt(coronalSlice,filename);
+    iftWriteImageByExt(coloredCoronal,filename);
 
     sprintf(filename, "%s-axial.png", view_name);
+    iftWriteImageByExt(coloredAxial,filename);
+
+    sprintf(filename, "%s-sagital_bw.png", view_name);
+    iftWriteImageByExt(sagitalSlice,filename);
+
+    sprintf(filename, "%s-coronal_bw.png", view_name);
+    iftWriteImageByExt(coronalSlice,filename);
+
+    sprintf(filename, "%s-axial_bw.png", view_name);
     iftWriteImageByExt(axialSlice,filename);
 
     iftDestroyImage(&sagitalSlice);
     iftDestroyImage(&coronalSlice);
     iftDestroyImage(&axialSlice);
+    iftDestroyImage(&coloredSagital);
+    iftDestroyImage(&coloredCoronal);
+    iftDestroyImage(&coloredAxial);
     iftDestroyImage(&img);
     /* -------------------- End of the coding area ----------------- */
         
