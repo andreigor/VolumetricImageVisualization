@@ -12,20 +12,34 @@ Student:   André Nóbrega
 #define K1 0
 #define K2 65535
 #define N_SCENE_FACES 6
+#define N_SCENE_VERTEX 8
+#define N_SCENE_EDGES 12
+#define BRIGHTNESS 0.3
+#define CONTRAST 0.5
 
 
-iftSet *DDA3D(iftImage *img, int p1, int pn){
+iftVoxel getVoxelFromPoint(iftPoint p){
+    iftVoxel u;
+    u.x = (int)ceil(p.x);
+    u.y = (int)ceil(p.y);
+    u.z = (int)ceil(p.z);
+
+    return u;
+}
+
+iftSet *DDA3D(iftImage *img, iftPoint p1, iftPoint pn){
     int n;
-    iftVoxel u1 = iftGetVoxelCoord(img, p1);
-    iftVoxel un = iftGetVoxelCoord(img, pn);
+
+    iftVoxel initialVoxel = getVoxelFromPoint(p1);
+    iftVoxel finalVoxel   = getVoxelFromPoint(pn);
 
     double dx, dy, dz;
 
-    if (p1 == pn) n = 1;
+    if ((initialVoxel.x == finalVoxel.x) && (initialVoxel.y == finalVoxel.y) && (initialVoxel.z == finalVoxel.z)) n = 1;
     else{
-        double Dx = un.x - u1.x;
-        double Dy = un.y - u1.y;
-        double Dz = un.z - u1.z;
+        double Dx = pn.x - p1.x;
+        double Dy = pn.y - p1.y;
+        double Dz = pn.z - p1.z;
 
         if ((fabs(Dx) >= fabs(Dy)) && (fabs(Dx) >= fabs(Dz))){
             n = (int)(fabs(Dx) + 1);
@@ -47,24 +61,25 @@ iftSet *DDA3D(iftImage *img, int p1, int pn){
         }
     }
 
-    iftSet *S = NULL;
-    iftInsertSet(&S, p1);
+    iftSet *S      = NULL;
+    int firstIndex = iftGetVoxelIndex(img, initialVoxel);
+    iftInsertSet(&S, firstIndex);
 
-    iftVoxel u,v;
+    iftPoint p;
+    iftVoxel u;
 
-    u.x = u1.x; u.y = u1.y; u.z = u1.z;
+    p.x = p1.x; p.y = p1.y; p.z = p1.z;
 
     for (int k = 1; k < n; k++){
-        v.x = iftRound(u.x); v.y = iftRound(u.y); v.z = iftRound(u.z);
+        u.x = iftRound(p.x); u.y = iftRound(p.y); u.z = iftRound(p.z);
         
-        int q = iftGetVoxelIndex(img, v);
+        int q = iftGetVoxelIndex(img, u);
         iftInsertSet(&S, q);
 
-        u.x += dx;
-        u.y += dy;
-        u.z += dz;
+        p.x += dx;
+        p.y += dy;
+        p.z += dz;
     }
-
     return S;
 
 }
@@ -109,7 +124,7 @@ iftColor getHeatMapProportionalColor(int intensity, int maximumValue){
     return YCbCr;
 }
 
-iftImage *getColoredToSlice(iftImage *img){
+iftImage *getColoredSlice(iftImage *img){
     iftImage *coloredImage = iftCreateColorImage(img->xsize, img->ysize, img->zsize, K2);
     for (int p = 0; p < img->n; p++){
         iftColor YCbCr = getHeatMapProportionalColor(img->val[p], K2);
@@ -146,11 +161,84 @@ iftPoint subtractPoints(iftPoint p1, iftPoint p2){
     return r;
 }
 
+iftVector subtractPointsAsVector(iftPoint p1, iftPoint p2){
+    iftVector r;
+    r.x = p1.x - p2.x;
+    r.y = p1.y - p2.y;
+    r.z = p1.z - p2.z;
+
+    return r;
+}
+
 typedef struct _face{
     iftVector normal_vector;
     iftPoint  center;
 } Face;
 
+typedef struct _vertex{
+    iftPoint vertex;
+} Vertex;
+
+typedef struct _edge{
+    Vertex v1, v2;
+} Edge;
+
+Edge *createSceneEdges(Vertex *sceneVertex){
+    Edge *sceneEdges = (Edge *)calloc(N_SCENE_EDGES, sizeof(Edge));
+
+    sceneEdges[0].v1 = sceneVertex[0];
+    sceneEdges[0].v2 = sceneVertex[1];
+
+    sceneEdges[1].v1 = sceneVertex[1];
+    sceneEdges[1].v2 = sceneVertex[3];
+    
+    sceneEdges[2].v1 = sceneVertex[0];
+    sceneEdges[2].v2 = sceneVertex[2];
+
+    sceneEdges[3].v1 = sceneVertex[2];
+    sceneEdges[3].v2 = sceneVertex[3];
+
+    sceneEdges[4].v1 = sceneVertex[0];
+    sceneEdges[4].v2 = sceneVertex[4];
+
+    sceneEdges[5].v1 = sceneVertex[1];
+    sceneEdges[5].v2 = sceneVertex[5];
+
+    sceneEdges[6].v1 = sceneVertex[2];
+    sceneEdges[6].v2 = sceneVertex[6];
+
+    sceneEdges[7].v1 = sceneVertex[3];
+    sceneEdges[7].v2 = sceneVertex[7];
+
+    sceneEdges[8].v1 = sceneVertex[4];
+    sceneEdges[8].v2 = sceneVertex[5];
+
+    sceneEdges[9].v1 = sceneVertex[4];
+    sceneEdges[9].v2 = sceneVertex[6];
+
+    sceneEdges[10].v1 = sceneVertex[5];
+    sceneEdges[10].v2 = sceneVertex[7];
+
+    sceneEdges[11].v1 = sceneVertex[6];
+    sceneEdges[11].v2 = sceneVertex[7];
+
+    return sceneEdges;
+}
+
+Vertex *createSceneVertex(iftImage *img){
+    Vertex *sceneVertex = (Vertex *)calloc(N_SCENE_VERTEX, sizeof(Vertex));
+
+    sceneVertex[0].vertex = createPoint(0, 0, 0);
+    sceneVertex[1].vertex = createPoint(img->xsize - 1, 0, 0);
+    sceneVertex[2].vertex = createPoint(0, img->ysize - 1, 0);
+    sceneVertex[3].vertex = createPoint(img->xsize - 1, img->ysize - 1, 0);
+    sceneVertex[4].vertex = createPoint(0, 0, img->zsize - 1);
+    sceneVertex[5].vertex = createPoint(img->xsize - 1, 0, img->zsize - 1);
+    sceneVertex[6].vertex = createPoint(0, img->ysize - 1, img->zsize - 1);
+    sceneVertex[7].vertex = createPoint(img->xsize - 1, img->ysize - 1, img->zsize - 1);
+
+    return sceneVertex;
+}
 
 Face *createSceneFaces(iftImage *img){
     Face *sceneFaces = (Face *)calloc(N_SCENE_FACES, sizeof(Face));
@@ -176,14 +264,80 @@ Face *createSceneFaces(iftImage *img){
     return sceneFaces;
 }
 
-iftVoxel getVoxelFromPoint(iftPoint p){
-    iftVoxel u;
-    u.x = (int)ceil(p.x);
-    u.y = (int)ceil(p.y);
-    u.z = (int)ceil(p.z);
-
-    return u;
+double innerProduct(iftVector v1, iftVector v2){
+    double result = (v1.x * v2.x) + (v1.y * v2.y) + (v1.z * v2.z);
+    return result;
 }
+
+void drawPoint(iftImage *img, iftVoxel u, iftAdjRel *A){
+    for (int i = 0; i < A->n; i++){
+        iftVoxel v = iftGetAdjacentVoxel(A, u, i);
+        if (iftValidVoxel(img, v)){
+            int q = iftGetVoxelIndex(img, v);
+            img->val[q] = K2;
+        }
+    }
+}
+
+void draw2DLine(iftImage *img, iftPoint p1, iftPoint pn){
+    int n;
+
+    iftVoxel initialVoxel = getVoxelFromPoint(p1);
+    iftVoxel finalVoxel   = getVoxelFromPoint(pn);
+
+    iftAdjRel *A = iftCircular(1.0);
+
+    double dx, dy;
+
+    if ((initialVoxel.x == finalVoxel.x) && (initialVoxel.y == finalVoxel.y) && (initialVoxel.z == finalVoxel.z)) n = 1;
+    else{
+        double Dx = pn.x - p1.x;
+        double Dy = pn.y - p1.y;
+
+        if (fabs(Dx) >= fabs(Dy)){
+            n = (int)(fabs(Dx) + 1);
+            dx = iftSign(Dx);
+            dy = dx * ((double)Dy/Dx);
+        }
+        else{
+            n = (int)(fabs(Dy) + 1);
+            dy = iftSign(Dy);
+            dx = dy * ((double)Dx/Dy);
+        }
+    }
+
+
+    // Draw first voxel
+    // int firstIndex = iftGetVoxelIndex(img, initialVoxel);
+    // img->val[firstIndex] = K2;
+
+    drawPoint(img, initialVoxel, A);
+
+    iftPoint p;
+    iftVoxel u;
+
+    // iftColor RGB, YCbCr;
+
+    // RGB.val[0] = K2;
+    // RGB.val[1] = K2;
+    // RGB.val[2] = K2;
+
+
+    // YCbCr = iftRGBtoYCbCr(RGB, K2);
+    p.x = p1.x; p.y = p1.y; p.z = p1.z;
+
+    for (int k = 1; k < n; k++){
+        u.x = iftRound(p.x); u.y = iftRound(p.y); u.z = iftRound(p.z);
+        drawPoint(img, u, A);
+        // if (iftValidVoxel(img, u)) iftDrawPoint(img, u, YCbCr, A, K2);
+
+        p.x += dx;
+        p.y += dy;
+    }
+
+    iftDestroyAdjRel(&A);
+}
+
 
 
 int main(int argc, char *argv[]){
@@ -192,7 +346,7 @@ int main(int argc, char *argv[]){
 
     MemDinInicial = iftMemoryUsed(1);
 
-    if (argc != 6){
+    if ((argc != 6) && (argc != 5)){
         printf("usage MIP: <P1> <P2> <P3> <P4> <P5>\n");
         printf("P1: input image (.scn)\n");
         printf("P2: tilt angle alpha\n");
@@ -209,6 +363,17 @@ int main(int argc, char *argv[]){
     iftImage *img     = iftReadImageByExt(argv[1]);
     double alpha      = atof(argv[2]);
     double beta       = atof(argv[3]);
+    iftImage *mask    = iftCreateImage(img->xsize, img->ysize, img->zsize);
+    for (int i = 0; i < mask->n; i++){
+        mask->val[i] = 1;
+    }
+
+    if (argc == 6){
+        mask = iftReadImageByExt(argv[4]);
+    } 
+
+
+    /* ----------------------- Maximum intensity projection ---------------*/
     
     int diagonal   = (int)sqrt(img->xsize * img->xsize + img->ysize * img->ysize + img->zsize * img->zsize);
     iftImage *mip  = iftCreateImage(diagonal, diagonal, 1);
@@ -233,7 +398,6 @@ int main(int argc, char *argv[]){
     iftPoint n_prime = iftTransformVector(Phi_r, n);
     Face *sceneFaces = createSceneFaces(img);
 
-    int counter = 0;
 
     for (int i = 0; i < mip->n; i++){
         iftVoxel u  = iftGetVoxelCoord(mip, i);
@@ -255,56 +419,106 @@ int main(int argc, char *argv[]){
             double lambda      = -(numerator / denominator);
 
             
-            iftPoint intersection = createPoint(iftRound(p0.x + lambda * n_prime.x), iftRound(p0.y + lambda * n_prime.y), iftRound(p0.z + lambda * n_prime.z));
-            iftVoxel v            = getVoxelFromPoint(intersection);
+            iftVoxel intersection;
+            intersection.x = iftRound(p0.x + lambda * n_prime.x);
+            intersection.y = iftRound(p0.y + lambda * n_prime.y);
+            intersection.z = iftRound(p0.z + lambda * n_prime.z);
 
-            if (iftValidVoxel(img, v) && lambda > 0){
+            if (iftValidVoxel(img, intersection) && lambda > 0){
                 if (lambda < lambdaMin) lambdaMin = lambda;
                 if (lambda > lambdaMax) lambdaMax = lambda;
             }
         }
 
         if ((lambdaMin != IFT_INFINITY_DBL) && (lambdaMax != IFT_INFINITY_DBL_NEG)){
-            iftPoint initialPoint = createPoint(iftRound(p0.x + lambdaMin * n_prime.x), iftRound(p0.y + lambdaMin * n_prime.y), iftRound(p0.z + lambdaMin * n_prime.z));
-            iftPoint finalPoint   = createPoint(iftRound(p0.x + lambdaMax * n_prime.x), iftRound(p0.y + lambdaMax * n_prime.y), iftRound(p0.z + lambdaMax * n_prime.z));
+            iftPoint initialPoint = createPoint((p0.x + lambdaMin * n_prime.x), (p0.y + lambdaMin * n_prime.y), (p0.z + lambdaMin * n_prime.z));
+            iftPoint finalPoint   = createPoint((p0.x + lambdaMax * n_prime.x), (p0.y + lambdaMax * n_prime.y), (p0.z + lambdaMax * n_prime.z));
 
-            iftVoxel initialVoxel = getVoxelFromPoint(initialPoint);
-            iftVoxel finalVoxel   = getVoxelFromPoint(finalPoint);
 
-            int initialIndex = iftGetVoxelIndex(img, initialVoxel);
-            int finalIndex   = iftGetVoxelIndex(img, finalVoxel);
-
-            iftSet *S = DDA3D(img, initialIndex, finalIndex);
+            iftSet *S = DDA3D(img, initialPoint, finalPoint);
             
             int maximumIntensityValue = 0;
             int setSize               = iftSetSize(S);
             for (int k = 0; k < setSize; k++){
                 int intensityIndex = iftRemoveSet(&S);
                 int intensity      = img->val[intensityIndex];
-                if (intensity >= maximumIntensityValue) maximumIntensityValue = intensity;
+                if ((intensity >= maximumIntensityValue) && mask->val[intensityIndex]) maximumIntensityValue = intensity;
             }
-            
+
             mip->val[i] = maximumIntensityValue;
-            counter++;
             iftDestroySet(&S);
         }
     }
 
-    radiometricEnhance(mip, mip, 0.5, 0.7);
+    radiometricEnhance(img, mip, 1 - CONTRAST, 1 - BRIGHTNESS);
 
-    sprintf(filename, "%s", argv[5]);
+    iftImage *coloredMIP = getColoredSlice(mip);
+
+    /* ----------------------------- WIREFRAME ------------------------*/
+
+    iftVector n_neg     = createVector(0, 0, -1);
+    centerTranslation   = createVector(-img->xsize / 2, -img->ysize / 2, -img->zsize / 2);
+    diagonalTranslation = createVector(diagonal / 2, diagonal / 2, diagonal / 2);
+
+    Rx    = iftRotationMatrix(IFT_AXIS_X, alpha);
+    Ry    = iftRotationMatrix(IFT_AXIS_Y, beta);
+    Tc    = iftTranslationMatrix(centerTranslation);
+    Td    = iftTranslationMatrix(diagonalTranslation);
+
+    Phi_r              = iftMultMatrices(Ry, Rx);
+    aux                = iftMultMatrices(Td, Phi_r);
+    iftMatrix *Phi     = iftMultMatrices(aux, Tc);
+
+    Vertex *sceneVertex = createSceneVertex(img);
+    Edge *sceneEdges    = createSceneEdges(sceneVertex);
+
+    for (int f = 0; f < N_SCENE_FACES; f++){
+        iftVector normalVector = sceneFaces[f].normal_vector;
+        iftPoint faceCenter    = sceneFaces[f].center;
+
+        
+        if (innerProduct(iftTransformVector(Phi_r, normalVector), n_neg) > IFT_EPSILON){
+            for (int e = 0; e < N_SCENE_EDGES; e++){
+                iftVector edgeVector1, edgeVector2;
+                edgeVector1 = subtractPointsAsVector(sceneEdges[e].v1.vertex, faceCenter);
+                edgeVector2 = subtractPointsAsVector(sceneEdges[e].v2.vertex, faceCenter);
+
+                if ((innerProduct(edgeVector1, normalVector) == 0) && (innerProduct(edgeVector2, normalVector) == 0)){
+                    iftPoint p1 = iftTransformPoint(Phi, sceneEdges[e].v1.vertex);
+                    iftPoint pn = iftTransformPoint(Phi, sceneEdges[e].v2.vertex);
+
+                    p1.z = 0;
+                    pn.z = 0;
+
+
+                    draw2DLine(mip, p1, pn);
+                }
+
+            }
+        }
+        
+    }
+
+    iftDestroyMatrix(&aux);
+     
+
+    if (argc == 6) sprintf(filename, "%s", argv[5]);
+    else           sprintf(filename, "%s", argv[4]);
     iftWriteImageByExt(mip,filename);
     
     
 
     iftDestroyImage(&img);
     iftDestroyImage(&mip);
+    iftDestroyImage(&coloredMIP);
     iftDestroyMatrix(&Rx);
     iftDestroyMatrix(&Ry);
     iftDestroyMatrix(&Phi_r);
+    iftDestroyMatrix(&Phi);
     iftDestroyMatrix(&Tc);
     iftDestroyMatrix(&Td);
     iftDestroyMatrix(&Phi_inv);
+    iftDestroyImage(&mask);
 
     free(sceneFaces);
     /* -------------------- End of the coding area ----------------- */
