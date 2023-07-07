@@ -9,9 +9,11 @@
 #define N_SCENE_EDGES 12
 #define K1 0
 #define K2 65535
+#define VISIBILITY_EPSILON 0.1
+#define RHO 2
 
-#define BRIGHTNESS 0.7
-#define CONTRAST 0.5
+#define BRIGHTNESS 0.2
+#define CONTRAST 0.1
 // #define DEBUG 1
 
 
@@ -181,7 +183,10 @@ iftVector calculateNormalVector(iftImage *scene, iftImage *label, float alpha, i
             gradient_vector.z += (adjacent_vector.z)/iftVectorMagnitude(adjacent_vector) * gradient;
         }
     }
+
     double gradientVectorMagnitude = iftVectorMagnitude(gradient_vector);
+
+
     gradient_vector.x = gradient_vector.x / gradientVectorMagnitude;
     gradient_vector.y = gradient_vector.y / gradientVectorMagnitude;
     gradient_vector.z = gradient_vector.z / gradientVectorMagnitude;
@@ -242,7 +247,9 @@ void radiometricEnhance(iftImage *img, iftImage *slice, float window_percentage,
 typedef struct _object{
     int label;
     int visibility;
+    float opacity;
     float r, g, b;
+    iftImage *object_sEDT;
 } Object;
 
 typedef struct _normal_context{
@@ -312,8 +319,102 @@ NormalContext *getNormalContext(iftImage *scene, iftImage *label, float alpha){
     return normal_context;
 }
 
+iftImage *sEDT(iftImage *label, int object){
 
-Object *createObjects(int n, int visibilities[]){
+    /* Extracting boundary voxels */
+    iftSet *S    = NULL;
+    iftAdjRel *B = iftSpheric(1.0);
+    for (int p = 0; p < label->n; p++){
+        iftVoxel u = iftGetVoxelCoord(label, p);
+        if (label->val[p] == object){
+            for (int i = 0 ; i < B->n; i++){
+                iftVoxel v = iftGetAdjacentVoxel(B, u, i);
+                if (iftValidVoxel(label, v)){
+                    int q = iftGetVoxelIndex(label, v);
+                    if (label->val[q] != label->val[p]){
+                        iftInsertSet(&S, p);
+                        break;
+                    }
+                }
+                else{
+                    iftInsertSet(&S, p);
+                    break;
+                }
+            }
+        } 
+    }
+
+    iftDestroyAdjRel(&B);
+
+    
+
+    iftImage *cost = iftCreateImageFromImage(label);
+    iftImage *root = iftCreateImageFromImage(label);
+
+    for (int p = 0; p < cost->n; p++) {
+        cost->val[p] = IFT_INFINITY_INT; 
+        root->val[p] = 0;
+    }
+    
+    float diagonal = (label->xsize) * (label->xsize) + (label->ysize) * (label->ysize) + (label->zsize) * (label->zsize);
+    iftGQueue *Q   = iftCreateGQueue(diagonal, label->n, cost->val);
+    iftAdjRel *A   = iftSpheric(sqrt(3.0));
+
+    while (S != NULL){
+        int r = iftRemoveSet(&S);
+        cost->val[r] = 0;
+        root->val[r] = r;
+
+        iftInsertGQueue(&Q, r);
+    }
+
+    while (!iftEmptyGQueue(Q)){
+        int p               = iftRemoveGQueue(Q);
+        iftVoxel u          = iftGetVoxelCoord(cost, p);
+        iftVoxel root_voxel = iftGetVoxelCoord(cost, root->val[p]);
+        if (sqrt(cost->val[p]) <= RHO){
+            for (int i = 0; i < A->n; i++){
+                iftVoxel v = iftGetAdjacentVoxel(A, u, i);
+                if (iftValidVoxel(cost, v)){
+                    int q = iftGetVoxelIndex(cost, v);
+                    if (cost->val[q] > cost->val[p]){
+                        double tmp = squaredEuclideanDistance(root_voxel, v);
+                        if (tmp < cost->val[q]){
+                            if (Q->L.elem[q].color == IFT_GRAY)
+                                iftRemoveGQueueElem(Q, q);
+                            cost->val[q] = tmp;
+                            root->val[q] = root->val[p];
+                            iftInsertGQueue(&Q, q); 
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+
+    for (int p = 0; p < cost->n; p++){
+        if (cost->val[p] == IFT_INFINITY_INT){ 
+            cost->val[p] = 0;
+        }
+        else if (label->val[p] == object){
+            cost->val[p] = -cost->val[p];
+        }
+    }
+
+
+    iftDestroyImage(&root);
+    iftDestroyAdjRel(&A);
+    iftDestroyGQueue(&Q);
+    iftDestroySet(&S);
+
+    return cost;
+
+}
+
+
+Object *createObjects(int n, int visibilities[], float opacities[], iftImage *label){
     Object *objects = (Object *)calloc(n, sizeof(Object));
 
     objects[0].r = 255 / 255.0;
@@ -331,6 +432,8 @@ Object *createObjects(int n, int visibilities[]){
 
     for (int i = 0; i < n; i++){
         objects[i].visibility = visibilities[i];
+        objects[i].opacity    = opacities[i];
+        objects[i].object_sEDT = sEDT(label, i + 1);
     }
     return objects;
 }
@@ -483,7 +586,7 @@ int findSurfacePoint(iftImage *scene, GraphicalContext *gc, iftPoint p1, iftPoin
 
 }
 
-GraphicalContext *createGraphicalContext(iftImage *scene, iftImage *label, int n_objects, float alpha, float beta, int visibilities[]){
+GraphicalContext *createGraphicalContext(iftImage *scene, iftImage *label, int n_objects, float alpha, float beta, int visibilities[], float opacities[]){
     GraphicalContext *gc = (GraphicalContext *)calloc(1, sizeof(GraphicalContext));
 
     gc->ka = 0.1;
@@ -492,7 +595,7 @@ GraphicalContext *createGraphicalContext(iftImage *scene, iftImage *label, int n
     gc->ns = 5;
     gc->ra = K2;
     gc->n_objects      = n_objects;
-    gc->objects        = createObjects(gc->n_objects, visibilities);
+    gc->objects        = createObjects(gc->n_objects, visibilities, opacities, label);
     gc->label          = label;
     gc->dmin           = IFT_INFINITY_FLT;
     gc->dmax           = IFT_INFINITY_FLT_NEG;
@@ -510,6 +613,10 @@ void destroyGraphicalContext(GraphicalContext **gc){
         if ((*gc)->normal_context != NULL){
             iftDestroyImage(&((*gc)->normal_context->normal_idx));
             free((*gc)->normal_context->normal_vectors);
+        }
+
+        for (int i = 0; i < (*gc)->n_objects; i++){
+            if ((*gc)->objects[i].object_sEDT != NULL) iftDestroyImage(&((*gc)->objects[i].object_sEDT));
         }
         free((*gc));
         (*gc) = NULL;
@@ -576,6 +683,7 @@ int IntphongModel(iftImage *scene, GraphicalContext *gc, int surfacePoint, iftPo
     int object_index       = gc->label->val[surfacePoint] - 1;
     double reflected_light = gc->objects[object_index].visibility * (ambient + depth_shading * (diffuse + specular));
 
+    // return reflected_light;
     return reflected_light;
 }
 
@@ -603,13 +711,25 @@ iftImage *getLabeledSagittalSlice(iftImage *img, int x, int perspective, Graphic
             for (u.y = 0; u.y < img->ysize; u.y++){ 
                 int p = iftGetVoxelIndex(img, u);
                 sagittalSlice->val[k] = img->val[p];
+
                 if (gc->label->val[p]){
+                    // sagittalSlice->val[k] = (int)((0.6 * K2) * img->val[p] + (0.4 * K2) * gc->objects[gc->label->val[p] - 1].object_sEDT->val[p]);
                     RGB.val[0]            = (int)(K2 * gc->objects[gc->label->val[p] - 1].r);
                     RGB.val[1]            = (int)(K2 * gc->objects[gc->label->val[p] - 1].g);
                     RGB.val[2]            = (int)(K2 * gc->objects[gc->label->val[p] - 1].b);
                     Y_CB_CR               = iftRGBtoYCbCr(RGB, K2);
                     sagittalSlice->Cb[k]   = Y_CB_CR.val[1];
                     sagittalSlice->Cr[k]   = Y_CB_CR.val[2];
+                    if (gc->objects[gc->label->val[p] - 1].object_sEDT->val[p] == 0){
+                        RGB.val[0] = K2;
+                        RGB.val[1] = 0;
+                        RGB.val[2] = 0;
+                        Y_CB_CR               = iftRGBtoYCbCr(RGB, K2);
+                        // sagittalSlice->val[k]  = Y_CB_CR.val[0];
+                        sagittalSlice->Cb[k]   = Y_CB_CR.val[1];
+                        sagittalSlice->Cr[k]   = Y_CB_CR.val[2];
+
+                }
                 }
                 k++;
             }
@@ -629,6 +749,16 @@ iftImage *getLabeledSagittalSlice(iftImage *img, int x, int perspective, Graphic
                     Y_CB_CR               = iftRGBtoYCbCr(RGB, K2);
                     sagittalSlice->Cb[k]  = Y_CB_CR.val[1];
                     sagittalSlice->Cr[k]  = Y_CB_CR.val[2];
+                    if (gc->objects[gc->label->val[p] - 1].object_sEDT->val[p] == 0){
+                        RGB.val[0] = K2;
+                        RGB.val[1] = 0;
+                        RGB.val[2] = 0;
+                        Y_CB_CR               = iftRGBtoYCbCr(RGB, K2);
+                        // sagittalSlice->val[k]  = Y_CB_CR.val[0];
+                        sagittalSlice->Cb[k]   = Y_CB_CR.val[1];
+                        sagittalSlice->Cr[k]   = Y_CB_CR.val[2];
+
+                }
                 }
                 k++;
             }
@@ -661,6 +791,16 @@ iftImage *getLabeledCoronalSlice(iftImage *img, int y, int perspective, Graphica
                     Y_CB_CR               = iftRGBtoYCbCr(RGB, K2);
                     coronalSlice->Cb[k]   = Y_CB_CR.val[1];
                     coronalSlice->Cr[k]   = Y_CB_CR.val[2];
+                    if (gc->objects[gc->label->val[p] - 1].object_sEDT->val[p] == 0){
+                        RGB.val[0] = K2;
+                        RGB.val[1] = 0;
+                        RGB.val[2] = 0;
+                        Y_CB_CR               = iftRGBtoYCbCr(RGB, K2);
+                        // sagittalSlice->val[k]  = Y_CB_CR.val[0];
+                        coronalSlice->Cb[k]   = Y_CB_CR.val[1];
+                        coronalSlice->Cr[k]   = Y_CB_CR.val[2];
+
+                }
                 }
                 k++;
             }
@@ -681,6 +821,7 @@ iftImage *getLabeledCoronalSlice(iftImage *img, int y, int perspective, Graphica
                         Y_CB_CR               = iftRGBtoYCbCr(RGB, K2);
                         coronalSlice->Cb[k]   = Y_CB_CR.val[1];
                         coronalSlice->Cr[k]   = Y_CB_CR.val[2];
+                        
                     }
                     k++;
                 }
@@ -713,6 +854,16 @@ iftImage *getLabeledAxialSlice(iftImage *img, int z, int perspective, GraphicalC
                     Y_CB_CR               = iftRGBtoYCbCr(RGB, K2);
                     axialSlice->Cb[k]   = Y_CB_CR.val[1];
                     axialSlice->Cr[k]   = Y_CB_CR.val[2];
+                    if (gc->objects[gc->label->val[p] - 1].object_sEDT->val[p] == 0){
+                        RGB.val[0] = K2;
+                        RGB.val[1] = 0;
+                        RGB.val[2] = 0;
+                        Y_CB_CR               = iftRGBtoYCbCr(RGB, K2);
+                        // sagittalSlice->val[k]  = Y_CB_CR.val[0];
+                        axialSlice->Cb[k]   = Y_CB_CR.val[1];
+                        axialSlice->Cr[k]   = Y_CB_CR.val[2];
+
+                }
                 }
                 k++;
             }
@@ -741,21 +892,172 @@ iftImage *getLabeledAxialSlice(iftImage *img, int z, int perspective, GraphicalC
     return axialSlice;
 }
 
+
+
+iftVector calculateNormalVectorBySEDT(iftImage *objectSEDT, int p){
+    iftAdjRel *A = iftSpheric((3.0));
+    int       gradient;
+    iftVector gradient_vector = createVector(0, 0, 0);
+    iftVoxel u                = iftGetVoxelCoord(objectSEDT, p);
+
+    for (int i = 1; i < A->n; i++){
+        iftVoxel v = iftGetAdjacentVoxel(A, u, i);
+        if (iftValidVoxel(objectSEDT, v)){
+            int q = iftGetVoxelIndex(objectSEDT, v);
+
+            iftVector adjacent_vector;
+            adjacent_vector.x = v.x - u.x;
+            adjacent_vector.y = v.y - u.y;
+            adjacent_vector.z = v.z - u.z;
+
+            gradient = objectSEDT->val[q] - objectSEDT->val[p];
+
+            // printf("Val p: %d\n", objectSEDT->val[p]);
+            // printf("Val q: %d\n", objectSEDT->val[q]);
+
+            // printf("Gradient: %d\n", gradient);
+            // printf("u: %d %d %d\n", u.x, u.y, u.z);
+            // printf("v: %d %d %d\n", v.x, v.y, v.z);
+
+            // printf("Adjacent vector: %lf %lf %lf -> %f, %d = %d - %d\n", adjacent_vector.x, adjacent_vector.y, adjacent_vector.z, iftVectorMagnitude(adjacent_vector), gradient, objectSEDT->val[q], objectSEDT->val[p]);
+
+            gradient_vector.x += (adjacent_vector.x)/iftVectorMagnitude(adjacent_vector) * gradient;
+            gradient_vector.y += (adjacent_vector.y)/iftVectorMagnitude(adjacent_vector) * gradient;
+            gradient_vector.z += (adjacent_vector.z)/iftVectorMagnitude(adjacent_vector) * gradient;
+        }
+    }
+
+    iftDestroyAdjRel(&A);
+
+    // printf("Gradient vector: %lf %lf %lf -> %f\n", gradient_vector.x, gradient_vector.y, gradient_vector.z, iftVectorMagnitude(gradient_vector));
+    // printf("##########################\n");
+
+    double gradientVectorMagnitude = iftVectorMagnitude(gradient_vector);
+    gradient_vector.x =  - gradient_vector.x / gradientVectorMagnitude;
+    gradient_vector.y =  - gradient_vector.y / gradientVectorMagnitude;
+    gradient_vector.z =  - gradient_vector.z / gradientVectorMagnitude;
+
+    return gradient_vector;
+
+}
+
+iftColor computeColorAlongRay(iftImage *scene, GraphicalContext *gc, iftPoint p1, iftPoint pn, iftPoint planePoint, iftVector n_prime, int normal_type){
+    int n;
+
+    iftVoxel initialVoxel = getVoxelFromPoint(p1);
+    iftVoxel finalVoxel   = getVoxelFromPoint(pn);
+
+    double dx = 0, dy = 0, dz = 0;
+
+    if ((initialVoxel.x == finalVoxel.x) && (initialVoxel.y == finalVoxel.y) && (initialVoxel.z == finalVoxel.z)) n = 1;
+    else{
+        double Dx = pn.x - p1.x;
+        double Dy = pn.y - p1.y;
+        double Dz = pn.z - p1.z;
+
+        if ((fabs(Dx) >= fabs(Dy)) && (fabs(Dx) >= fabs(Dz))){
+            n = (int)(fabs(Dx) + 1);
+            dx = iftSign(Dx);
+            dy = dx * ((double)Dy/Dx);
+            dz = dx * ((double)Dz/Dx);
+        }
+        else if ((fabs(Dy) >= fabs(Dx)) && (fabs(Dy) >= fabs(Dz))){
+            n = (int)(fabs(Dy) + 1);
+            dy = iftSign(Dy);
+            dx = dy * ((double)Dx/Dy);
+            dz = dy * ((double)Dz/Dy);
+        }
+        else{
+            n = (int)(fabs(Dz) + 1);
+            dz = iftSign(Dz);
+            dx = dz * ((double)Dx/Dz);
+            dy = dz * ((double)Dy/Dz);
+        }
+    }
+
+    int *obj_flag                = (int *)calloc(gc->n_objects, sizeof(int));
+    double visibility_saturation = 1.0;
+
+    iftColor RGB;
+    RGB.val[0] = 0;
+    RGB.val[1] = 0;
+    RGB.val[2] = 0; 
+
+    int k = 1;
+
+
+
+    iftAdjRel *A     = iftSpheric(1.0);
+    iftPoint p_prime = createPoint(initialVoxel.x, initialVoxel.y, initialVoxel.z);
+    while ((k <= n) && (visibility_saturation > VISIBILITY_EPSILON)){
+
+        iftVoxel p_prime_voxel = getVoxelFromPoint(p_prime);
+        for (int i = 0; i < A->n; i++){
+            iftVoxel v = iftGetAdjacentVoxel(A, p_prime_voxel, i);
+            if (iftValidVoxel(scene, v)){
+                int q = iftGetVoxelIndex(scene, v);
+                if ((gc->label->val[q] != 0)){
+                    int object_index = gc->label->val[q] - 1;
+                    if ((gc->objects[object_index].visibility) && (obj_flag[object_index] == 0 && (gc->objects[object_index].opacity > 0))){
+                        iftVector normal_vector;
+                        if (normal_type == 0)
+                            normal_vector = calculateNormalVector(scene, gc->label, 2.0, q);
+                        else
+                            normal_vector = calculateNormalVectorBySEDT(gc->objects[object_index].object_sEDT, q);
+                        double theta  = angleBetweenVectors(normal_vector, n_prime);
+                        if (cos(theta) > 0){
+                            /* We found a voxel that must be rendered. Time to compute phong */
+                            double reflected_light = IntphongModel(scene, gc, q, planePoint, theta);
+                            RGB.val[0] += visibility_saturation * gc->objects[object_index].opacity * reflected_light * gc->objects[object_index].r;
+                            RGB.val[1] += visibility_saturation * gc->objects[object_index].opacity * reflected_light * gc->objects[object_index].g;
+                            RGB.val[2] += visibility_saturation * gc->objects[object_index].opacity * reflected_light * gc->objects[object_index].b;
+
+                            visibility_saturation *= (1 - gc->objects[object_index].opacity);
+                            obj_flag[object_index] = 1;
+                            break;
+                        }
+
+                    }
+
+                }
+            }
+
+        }
+        
+        p_prime.x += dx;
+        p_prime.y += dy;
+        p_prime.z += dz;
+        k++;
+    
+    }
+
+    iftDestroyAdjRel(&A);
+    free(obj_flag);
+
+    return iftRGBtoYCbCr(RGB, K2);
+
+}
+
+
 int main(int argc, char *argv[]){
     timer *tstart = NULL;
     int    MemDinInicial, MemDinFinal;
 
     MemDinInicial = iftMemoryUsed(1);
 
-    if ((argc != 7 && argc != 8)){
-        printf("usage surface_rendering: <P1> <P2> <P3> <P4> <P5> <P6> <P7>\n");
+    if ((argc != 9 && argc != 10)){
+        printf("argc: %d\n", argc);
+        printf("usage transparent_surface_rendering: <P1> <P2> <P3> <P4> <P5> <P6> <P7> <P8> <P9> <P10> <P11>\n");
         printf("P1: input grayscale 3D image (.scn)\n");
         printf("P2: label scene (.scn)\n");
         printf("P3: tilt angle alpha\n");
-        printf("P4: spin angle beta\n");
+        printf("P4: sping angle beta\n");
         printf("P5: output surface rendering\n");
-        printf("P6: visibility of each object (e.g., “0,1,1” for three objects means that only objects o2 and o3 are visible).\n");
-        printf("P7: optional p0 = (x0, y0, z0) coordinates of a point p0 in the scene\n");
+        printf("P6: for scene-based normal vector and 1 for object-based normal vector\n");
+        printf("P7: opacities of the objects in P2 (e.g., “o1, o2, o3” for three objects in P2)\n");
+        printf("P8: visibility of each object (e.g., “0,1,1” for three objects means that only objects o2 and o3 are visible).\n");
+        printf("P9: optional p0 = (x0, y0, z0) coordinates of a point p0 in the scene\n");
+
         exit(0);
     }
     tstart = iftTic();
@@ -766,20 +1068,26 @@ int main(int argc, char *argv[]){
     iftImage *label     = iftReadImageByExt(argv[2]);
     float alpha         = atof(argv[3]);
     float beta          = atof(argv[4]);
+    int normal_method   = atoi(argv[6]);
+    float o1, o2, o3;
     int   v1, v2, v3;
-    sscanf(argv[6], "%d %d %d", &v1, &v2, &v3);
-    int visibilities[3] = { v1, v2, v3 };
     int x0 = 0, y0 = 0, z0 = 0;
+    sscanf(argv[7], "%f %f %f", &o1, &o2, &o3);
+    sscanf(argv[8], "%d %d %d", &v1, &v2, &v3);
+    if (argc == 10)
+        sscanf(argv[9], "%d %d %d", &x0, &y0, &z0);
+    
+
+
+    float opacities[3]  = { o1, o2, o3 };
+    int visibilities[3] = { v1, v2, v3 };
 
     
-    if (argc == 8){
-        sscanf(argv[7], "%d %d %d", &x0, &y0, &z0);
-    }
 
     int n_objects        = countNumberOfObjectsInLabelScene(label);
-    GraphicalContext *gc = createGraphicalContext(img, label, n_objects, alpha, beta, visibilities);
-    int diagonal       = (int)sqrt(img->xsize * img->xsize + img->ysize * img->ysize + img->zsize * img->zsize);
-    iftImage *surface  = iftCreateImage(diagonal, diagonal, 1);
+    GraphicalContext *gc = createGraphicalContext(img, label, n_objects, alpha, beta, visibilities, opacities);
+    int diagonal         = (int)sqrt(img->xsize * img->xsize + img->ysize * img->ysize + img->zsize * img->zsize);
+    iftImage *surface    = iftCreateImage(diagonal, diagonal, 1);
     iftSetCbCr(surface, K2 / 2);
 
     iftVector n                   = createVector(0, 0, 1);
@@ -800,6 +1108,7 @@ int main(int argc, char *argv[]){
     iftVector n_prime = iftTransformVector(Phi_r, n);
     Face *sceneFaces  = createSceneFaces(img);
 
+    
     for (int i = 0; i < surface->n; i++){
         iftVoxel u  = iftGetVoxelCoord(surface, i);
         iftPoint p  = createPoint(u.x, u.y, -diagonal / 2);
@@ -834,28 +1143,23 @@ int main(int argc, char *argv[]){
             iftPoint initialPoint = createPoint((p0.x + lambdaMin * n_prime.x), (p0.y + lambdaMin * n_prime.y), (p0.z + lambdaMin * n_prime.z));
             iftPoint finalPoint   = createPoint((p0.x + lambdaMax * n_prime.x), (p0.y + lambdaMax * n_prime.y), (p0.z + lambdaMax * n_prime.z));
 
-            double theta;
-            int surfacePoint      = findSurfacePoint(img, gc, initialPoint, finalPoint, &theta, n_prime);
-
-            if (surfacePoint != IFT_NIL){
-                // int reflected_light = IntphongModel(img, gc, surfacePoint, p0, theta);
-                // surface->val[i] = reflected_light;
-                iftColor c      = phongModel(img, gc, surfacePoint, p0, theta);
-                surface->val[i] = c.val[0];
-                surface->Cb[i]  = c.val[1];
-                surface->Cr[i]  = c.val[2];
-
-            }
+            iftColor c = computeColorAlongRay(img, gc, initialPoint, finalPoint, p0, n_prime, normal_method);
+            surface->val[i] = c.val[0];
+            surface->Cb[i]  = c.val[1];
+            surface->Cr[i]  = c.val[2];
         }
     }
 
-    surface = iftNormalize(surface, 0, K2);
+    iftImage *aux_image = iftNormalize(surface, 0, K2);
+    iftDestroyImage(&surface);
+    surface = aux_image;
 
 
     /* Getting slices overlaid by transparent colors */
     iftImage *sagital = getLabeledSagittalSlice(img, x0, 0, gc);
-    iftImage *coronal = getLabeledCoronalSlice(img, y0, 0, gc);
-    iftImage *axial   = getLabeledAxialSlice(img, z0, 0, gc);
+    iftImage *coronal = getLabeledCoronalSlice(img,  y0, 0, gc);
+    iftImage *axial   = getLabeledAxialSlice(img,    z0, 0, gc);
+
 
     radiometricEnhance(img, sagital, 1.0 - CONTRAST, 1.0 - BRIGHTNESS);
     radiometricEnhance(img, coronal, 1.0 - CONTRAST, 1.0 - BRIGHTNESS);

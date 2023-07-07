@@ -3,7 +3,7 @@
 
 #include "ift.h"
 
-#define CLOSE_RADIUS 20
+#define CLOSE_RADIUS 100
 #define N_SCENE_FACES 6
 #define N_SCENE_VERTEX 8
 #define N_SCENE_EDGES 12
@@ -32,7 +32,7 @@ iftImage *binMultipleObjectMask(iftImage *mask){
 }
 
 int squaredEuclideanDistance(iftVoxel u, iftVoxel v){
-    int distance = (int)(((u.x - v.x) * (u.x - v.x) + (u.y - v.y) * (u.y - v.y) + (u.z - v.z) * (u.z - v.z)));
+    int distance = (((u.x - v.x) * (u.x - v.x) + (u.y - v.y) * (u.y - v.y) + (u.z - v.z) * (u.z - v.z)));
     return distance;
 }
 
@@ -84,6 +84,7 @@ iftImage *getEDTFromEnvelop(iftImage *envelop){
             }
         }
     }
+
 
     iftDestroyImage(&root);
     iftDestroyGQueue(&Q);
@@ -261,11 +262,19 @@ iftPoint findIsoSurfacePoint(iftImage *edt, float depth, iftPoint p1, iftPoint p
     }
     
 
-    iftPoint p_prime = createPoint(initialVoxel.x, initialVoxel.y, initialVoxel.z);
+    iftPoint p_prime  = createPoint(initialVoxel.x, initialVoxel.y, initialVoxel.z);
     int p_prime_index = iftGetVoxelIndex(edt, initialVoxel);
+    iftVoxel u        = iftGetVoxelCoord(edt, p_prime_index);
+    iftAdjRel *A      = iftSpheric(1.0);
 
-    if (((depth - 0.5) < sqrt(edt->val[p_prime_index])) && ((depth + 0.5) > sqrt(edt->val[p_prime_index])))
-        return p_prime;
+    for (int i = 0; i < A->n; i++){
+        iftVoxel v = iftGetAdjacentVoxel(A, u, i);
+        if (iftValidVoxel(edt, v)){
+            int q = iftGetVoxelIndex(edt, v);
+            if (((depth - 0.8) < sqrt(edt->val[q])) && ((depth + 0.8) > sqrt(edt->val[q])))
+                return p_prime;
+        }
+    }
     
     for (int k = 1; k < n; k++){
         p_prime.x += dx;
@@ -273,10 +282,17 @@ iftPoint findIsoSurfacePoint(iftImage *edt, float depth, iftPoint p1, iftPoint p
         p_prime.z += dz;
         
         iftVoxel p_prime_voxel = getVoxelFromPoint(p_prime);
-        // p_prime_voxel.x = iftRound(p_prime.x); p_prime_voxel.y = iftRound(p_prime.y); p_prime_voxel.z = iftRound(p_prime.z);
-        p_prime_index = iftGetVoxelIndex(edt, p_prime_voxel);
-        if (((depth - 0.8) < sqrt(edt->val[p_prime_index])) && ((depth + 0.8) > sqrt(edt->val[p_prime_index])))
-            return p_prime;
+        p_prime_index          = iftGetVoxelIndex(edt, p_prime_voxel);
+
+        for (int i = 0; i < A->n; i++){
+            iftVoxel v = iftGetAdjacentVoxel(A, p_prime_voxel, i);
+            if (iftValidVoxel(edt, v)){
+                int q = iftGetVoxelIndex(edt, v);
+                if (((depth - 0.8) < sqrt(edt->val[q])) && ((depth + 0.8) > sqrt(edt->val[q])))
+                    return p_prime;
+
+            }
+        }
     }
 
     p_prime.x = -10;
@@ -358,6 +374,90 @@ int trilinearInterpolation(iftImage *scene, iftPoint p){
     return I;
 }
 
+iftVector subtractPointsAsVector(iftPoint p1, iftPoint p2){
+    iftVector r;
+    r.x = p1.x - p2.x;
+    r.y = p1.y - p2.y;
+    r.z = p1.z - p2.z;
+
+    return r;
+}
+
+void drawPoint(iftImage *img, iftVoxel u, iftAdjRel *A){
+    for (int i = 0; i < A->n; i++){
+        iftVoxel v = iftGetAdjacentVoxel(A, u, i);
+        if (iftValidVoxel(img, v)){
+            int q = iftGetVoxelIndex(img, v);
+            img->val[q] = K2;
+        }
+    }
+}
+
+void draw2DLine(iftImage *img, iftPoint p1, iftPoint pn){
+    int n;
+
+    iftVoxel initialVoxel = getVoxelFromPoint(p1);
+    iftVoxel finalVoxel   = getVoxelFromPoint(pn);
+
+    iftAdjRel *A = iftCircular(1.0);
+
+    double dx, dy;
+
+    if ((initialVoxel.x == finalVoxel.x) && (initialVoxel.y == finalVoxel.y) && (initialVoxel.z == finalVoxel.z)) n = 1;
+    else{
+        double Dx = pn.x - p1.x;
+        double Dy = pn.y - p1.y;
+
+        if (fabs(Dx) >= fabs(Dy)){
+            n = (int)(fabs(Dx) + 1);
+            dx = iftSign(Dx);
+            dy = dx * ((double)Dy/Dx);
+        }
+        else{
+            n = (int)(fabs(Dy) + 1);
+            dy = iftSign(Dy);
+            dx = dy * ((double)Dx/Dy);
+        }
+    }
+
+
+    // Draw first voxel
+    // int firstIndex = iftGetVoxelIndex(img, initialVoxel);
+    // img->val[firstIndex] = K2;
+
+    drawPoint(img, initialVoxel, A);
+
+    iftPoint p;
+    iftVoxel u;
+
+    // iftColor RGB, YCbCr;
+
+    // RGB.val[0] = K2;
+    // RGB.val[1] = K2;
+    // RGB.val[2] = K2;
+
+
+    // YCbCr = iftRGBtoYCbCr(RGB, K2);
+    p.x = p1.x; p.y = p1.y; p.z = p1.z;
+
+    for (int k = 1; k < n; k++){
+        u.x = iftRound(p.x); u.y = iftRound(p.y); u.z = iftRound(p.z);
+        drawPoint(img, u, A);
+        // if (iftValidVoxel(img, u)) iftDrawPoint(img, u, YCbCr, A, K2);
+
+        p.x += dx;
+        p.y += dy;
+    }
+
+    iftDestroyAdjRel(&A);
+}
+
+double innerProduct(iftVector v1, iftVector v2){
+    double result = (v1.x * v2.x) + (v1.y * v2.y) + (v1.z * v2.z);
+    return result;
+}
+
+
 
 
 
@@ -399,12 +499,19 @@ int main(int argc, char *argv[]){
 
     iftImage *envelop = getEnvelopFromSegmentationMask(mask, CLOSE_RADIUS);
 
-
+    printf("Max: %d, min: %d\n", iftMaximumValue(envelop), iftMinimumValue(envelop));
+    iftWriteImageByExt(envelop, "envelop.scn");
 
 
     /*--------------------------- EDT ---------------------------*/
 
     iftImage *EDT = getEDTFromEnvelop(envelop);
+
+    iftWriteImageByExt(EDT, "edt.scn");
+    /* Fixing EDT to be -1 outside object */
+    for (int p = 0; p < EDT->n; p++){
+        if (mask->val[p] == 0) EDT->val[p] = -1;
+    }
 
     /*--------------------------- Curvilinear cut ---------------------------*/
 
@@ -478,6 +585,51 @@ int main(int argc, char *argv[]){
     }
 
     radiometricEnhance(cut, cut, 1 - CONTRAST, 1 - BRIGHTNESS);
+
+    /* ----------------------------- WIREFRAME ------------------------*/
+
+    // iftVector n_neg     = createVector(0, 0, -1);
+    // centerTranslation   = createVector(-img->xsize / 2, -img->ysize / 2, -img->zsize / 2);
+    // diagonalTranslation = createVector(diagonal / 2, diagonal / 2, diagonal / 2);
+
+    // Rx    = iftRotationMatrix(IFT_AXIS_X, alpha);
+    // Ry    = iftRotationMatrix(IFT_AXIS_Y, beta);
+    // Tc    = iftTranslationMatrix(centerTranslation);
+    // Td    = iftTranslationMatrix(diagonalTranslation);
+
+    // Phi_r              = iftMultMatrices(Ry, Rx);
+    // aux                = iftMultMatrices(Td, Phi_r);
+    // iftMatrix *Phi     = iftMultMatrices(aux, Tc);
+
+    // Vertex *sceneVertex = createSceneVertex(img);
+    // Edge *sceneEdges    = createSceneEdges(sceneVertex);
+    // for (int f = 0; f < N_SCENE_FACES; f++){
+    //     iftVector normalVector = sceneFaces[f].normal_vector;
+    //     iftPoint faceCenter    = sceneFaces[f].center;
+
+        
+    //     if (innerProduct(iftTransformVector(Phi_r, normalVector), n_neg) > IFT_EPSILON){
+    //         for (int e = 0; e < N_SCENE_EDGES; e++){
+    //             iftVector edgeVector1, edgeVector2;
+    //             edgeVector1 = subtractPointsAsVector(sceneEdges[e].v1.vertex, faceCenter);
+    //             edgeVector2 = subtractPointsAsVector(sceneEdges[e].v2.vertex, faceCenter);
+
+    //             if ((innerProduct(edgeVector1, normalVector) == 0) && (innerProduct(edgeVector2, normalVector) == 0)){
+    //                 iftPoint p1 = iftTransformPoint(Phi, sceneEdges[e].v1.vertex);
+    //                 iftPoint pn = iftTransformPoint(Phi, sceneEdges[e].v2.vertex);
+
+    //                 p1.z = 0;
+    //                 pn.z = 0;
+
+
+    //                 draw2DLine(cut, p1, pn);
+    //             }
+
+    //         }
+    //     }
+        
+    // }
+
 
 
     sprintf(filename, "%s", argv[6]);
